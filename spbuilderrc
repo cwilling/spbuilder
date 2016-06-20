@@ -1,0 +1,2 @@
+SPBUILDER_BASE=/var/cache/spbuilder
+SPBUILDER_SLACKBUILDS=/scratch/PKG/SBo/slackbuilds

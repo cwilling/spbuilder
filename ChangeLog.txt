@@ -1,0 +1,26 @@
+20160613 CKW
+  - 0.60
+  - Redo using overlayfs instead of unpacking tarball
+
+20120903 CKW
+  - 0.50
+  - Redo using disposable btrfs snapshot instead of unpacking tarball
+
+20120903 CKW
+  - update for SL-14.0-rc4
+
+20120817 CKW
+  - update for SL-14.0-rc2
+
+20120816 CKW
+  - update for SL-14.0-rc1
+
+20110728 Christoph Willing (CKW)
+  - spbuilder is a package builder for Slackware(c),
+similar in intent to Debuntu's pbuilder application.
+It uses Linux Containers (LXC) rather than chroot,
+providing a completely sanitized environment for
+building packages that include dependency information,
+useful when using dependency-aware package installation
+systems such as slapt-get.
+

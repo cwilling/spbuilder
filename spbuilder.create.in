@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# ex:set ai shiftwidth=4 inputtab=spaces smarttab noautotab:
+#
+
+SPB_SHUTDOWN=%SPB_SHUTDOWN%
+LANG=${LANG:-"en_AU.utf8"}
+sed -i -e "s/^export LANG=.*/export LANG=$LANG/" /etc/profile.d/lang.sh
+
+. /root/.spbuilderrc
+
+echo "Updating hoorex data ... (~17sec.)"
+hoorex -f -s /mnt/slackbuilds
+
+# Wait for network
+tries=0
+while test $tries -lt 10 ; do
+        echo "Waiting for network ... [$tries]"
+        ping -q -c 1 10.1.1.1 2>/dev/null
+        if test $? -eq 0 ; then
+                break
+        fi
+        tries=$(expr $tries + 1)
+        sleep 1
+done
+
+echo "Updating packages ..."
+slapt-get --update
+slapt-get --upgrade -y
+slapt-get --install -y build-common
+slapt-get --clean
+
+if [ $SPB_SHUTDOWN -eq 1 ]; then
+    echo "Shutting down now ..."
+    shutdown -h now
+else
+    echo "SPB_SHUTDOWN = 0 so keeping container $(hostname) running ..."
+fi

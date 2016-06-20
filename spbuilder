@@ -1,0 +1,577 @@
+#!/bin/sh
+#
+# ex:set ai shiftwidth=4 inputtab=spaces smarttab noautotab:
+#
+
+# Personal package builder for Slackware.
+# Copyright (C) 2011-2016  Christoph WIlling  Brisbane, Australia
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Must be root
+#
+[ $EUID -eq 0 ] || {
+  echo $"$0 must run as root."
+  exit 1
+}
+
+export PATH=/sbin:/usr/sbin:$PATH
+SPBUILDER_VERSION=
+SPBUILDER_DATA_DIR=/usr/share/spbuilder
+#SPBUILDER_DATA_DIR=/scratch/PKG/spbuilder/14.2/spbuilder-0.60
+SPBUILDER_SYSTEM_DIR=/etc/spbuilder
+[ -f ${SPBUILDER_SYSTEM_DIR}/spbuilderrc ] && source ${SPBUILDER_SYSTEM_DIR}/spbuilderrc
+
+ARCH=${ARCH:-`uname -m`}
+subarch=
+if [ "$ARCH" == "x86_64" ]; then
+    subarch=64
+    SPBUILDER_REPO_FILE=$SPBUILDER_DATA_DIR/spbuilder_repo.x86_64
+    SLAPT_PACKAGES="
+        slapt-get-0.10.2q-$ARCH-1_uqv.txz
+        slaptgetwrapper-1.0-noarch-3_uqv.txz
+        slackbuilds-0.4.63-noarch-1_uqv.txz
+        hoorex-0.6.0-$ARCH-1_uqv.txz
+    "
+else
+    SPBUILDER_REPO_FILE=$SPBUILDER_DATA_DIR/spbuilder_repo.i686
+    SLAPT_PACKAGES="
+        slapt-get-0.10.2q-i386-1_uqv.txz
+        slaptgetwrapper-1.0-noarch-3_uqv.txz
+        slackbuilds-0.4.63-noarch-1_uqv.txz
+        hoorex-0.6.0-i486-1_SBo.txz
+    "
+fi
+SPBUILDER_MASTER_NAME=${SPBUILDER_MASTER_NAME:-spbuilder-SL14.2-$ARCH}
+SLAPT_MIRROR=${SLAPT_MIRROR:-http://darlo.selfip.org/slackware$subarch/14.2}
+SPBUILDER_MIRROR=${SPBUILDER_MIRROR:-http://ftp.iinet.net.au/linux/slackware}
+SPBUILDER_CONF=${SPBUILDER_CONF:-/etc/spbuilder/spbuilder-1402.conf}
+SPBUILDER_BASE=${SPBUILDER_BASE:-/var/cache/spbuilder}
+DEFAULT_BUILD_DIR=${SPBUILDER_BASE}/build
+BUILD_LOGDIR=${SPBUILDER_BASE}/log
+NAT_BASE_ADDR=${NAT_BASE_ADDR:-10.72}
+SPB_SHUTDOWN=${SPB_SHUTDOWN:-1}
+LANG=${LANG:-"en_AU.utf8"}
+echo "SPB_SHUTDOWN on error is $SPB_SHUTDOWN"
+
+umask 022
+unset CC CXX CFLAGS CXXFLAGS LDFLAGS
+action=""
+source_location=""
+build_tarball=""
+package_tag="_uqv"
+update_password=""
+logfile=""
+repo_rcfile=""
+local_dirs=""
+
+spbuilder_base_name=base_1402
+default_route_device=${SPBUILDER_DEFAULT_ROUTE:-$(/sbin/route | grep default | awk '{print $8}'|uniq)}
+lxc_base_dir=/var/lib/lxc
+
+FLOOR=2
+CEIL=252
+nat_net=${NAT_BASE_ADDR}.256 ;# something illegal i.e. needs to be set somewhere
+while true ; do
+    number=0
+    while [ "$number" -le $FLOOR ]; do
+        number=$RANDOM
+        let "number %= $CEIL"
+    done
+    ping -c1 -W1 ${NAT_BASE_ADDR}.${number}.1 2>&1 >/dev/null
+    # if ping fails, we'll use this network
+    if [ $? -ne 0 ]; then
+        nat_net=${NAT_BASE_ADDR}.${number}
+        break
+    fi
+done
+#echo "NAT network = $nat_net"
+
+trap early_out 1 2
+
+function random_string ()
+{
+    # Generate a random name for container & network device
+    #long_string=$(echo $$ |md5sum|md5sum)
+    long_string=$(mcookie -f /var/log/messages)
+    random_start=$(expr $RANDOM % 20 )
+
+    # Return result
+    echo ${long_string:$random_start:12}
+}
+our_name=$(random_string)
+#echo "Our temporary name = $our_name"
+
+function get_extra_dirs()
+{
+    extra_dirs_result=""
+
+    # if we see a "SOURCE=file://..." entry,
+    # strip beginning and end of entry to reveal diectory path
+    # and add that path to our result (extra_dirs_result)
+    for entry in $(cat $repo_rcfile) ; do
+            case "$entry" in
+            SOURCE=file*)
+            leftstrip=${entry/SOURCE=file:\//}
+            dir=${leftstrip%%\/:*}
+            dir=${dir%%\/}
+            if [ -d "$dir" ]; then
+                extra_dirs_result="${extra_dirs_result} $dir"
+            fi
+        ;;
+        esac
+    done
+
+    echo $extra_dirs_result
+}
+
+function setup_network ()
+{
+    echo $"Setting up network:"
+    echo $"    Our temporary name = $our_name"
+    #echo $"    nat_net = $nat_net"
+    echo $"    default_route_device = $default_route_device"
+
+    # Create the NAT network
+    echo 1 > /proc/sys/net/ipv4/ip_forward    # Enables packet forwarding by kernel
+    /sbin/brctl addbr $our_name
+    /sbin/brctl setfd $our_name 0
+    /sbin/ifconfig $our_name ${nat_net}.1 netmask 255.255.255.0 promisc up
+    /usr/sbin/iptables -t nat -A POSTROUTING -o $default_route_device -j MASQUERADE
+}
+
+function restore_container_tags ()
+{
+    #echo $"restore container tags ..."
+    ( cd ${lxc_base_dir}
+        # config file
+        mv ${our_name}/config.bu_$our_name ${our_name}/config
+
+        # container's network
+        mv ${our_name}/rootfs/etc/rc.d/rc.inet1.conf.bu_$our_name ${our_name}/rootfs/etc/rc.d/rc.inet1.conf
+
+        # container's fstab
+        mv ${our_name}/rootfs/etc/fstab.bu_$our_name ${our_name}/rootfs/etc/fstab
+    )
+}
+
+function setup_container_common ()
+{
+    #echo $"common network setup ..."
+    ( cd ${lxc_base_dir}
+        # config file
+        # first save a copy for restore_container_tags()
+        cp -p ${our_name}/config ${our_name}/config.bu_$our_name
+        sed -i -e "s/LXC_NETWORK_LINK/${our_name}/" ${our_name}/config
+        sed -i -e "s/LXC_NETWORK_IPV4/${NAT_BASE_ADDR}.${number}.${number}\/24/" ${our_name}/config
+        sed -i -e "s/LXC_UTSNAME/${our_name}/g" ${our_name}/config
+        cp -p ${our_name}/config ${our_name}/config.run
+
+        # container's network
+        cp -p ${our_name}/rootfs/etc/rc.d/rc.inet1.conf ${our_name}/rootfs/etc/rc.d/rc.inet1.conf.bu_$our_name
+        sed -i -e "s/LXC_IPADDR/${NAT_BASE_ADDR}.${number}.${number}/" ${our_name}/rootfs/etc/rc.d/rc.inet1.conf
+        sed -i -e "s/LXC_NETMASK/255.255.255.0/" ${our_name}/rootfs/etc/rc.d/rc.inet1.conf
+        sed -i -e "s/LXC_GATEWAY/${NAT_BASE_ADDR}.${number}.1/" ${our_name}/rootfs/etc/rc.d/rc.inet1.conf
+
+        # containers fstab
+        cp -p ${our_name}/rootfs/etc/fstab ${our_name}/rootfs/etc/fstab.bu_$our_name
+        sed -i -e "s/LXC_UTSNAME/${our_name}/g" ${our_name}/rootfs/etc/fstab
+        cp -p /etc/resolv.conf ${our_name}/rootfs/etc/
+    )
+}
+
+function _print_elapsed_time ()
+{
+    local S=$1
+    ((h = S / 3600))
+    ((m = S % 3600 / 60))
+    ((s = $S % 60))
+
+    if [ $h -gt 0 ]; then
+        printf "%dh %dm %ds\n" $h $m $s
+    else
+        if [ $m -gt 0 ]; then
+            printf "%dm %ds\n" $m $s
+        else
+            printf "%ds\n" $s
+        fi
+    fi
+}
+
+function show_usage ()
+{
+    echo $"Usage: $0 [action] [options]"
+    echo $"  [action]  = { create | update | build | login | clean }"
+}
+
+# Function create_container builds a minimal 'master' LXC container
+# with additional packages for general development, from which
+# snapshot containers will be cloned to do actual package building.
+# 
+function create_container ()
+{
+    echo $"Creating a new spbuilder container named: $SPBUILDER_MASTER_NAME"
+    CACHEDIR=${CACHEDIR:-/var/cache/lxc/spbuilder}
+    mkdir -p $CACHEDIR
+    echo -n $"Clearing out previously cached material ... "
+    rm -rf $CACHEDIR/*
+    echo $"OK"
+    MIRROR=$SPBUILDER_MIRROR \
+    lxc-create \
+    --name $SPBUILDER_MASTER_NAME \
+    -f $SPBUILDER_CONF \
+    --template spbuilder-1402 \
+    -- -a $ARCH
+
+    ping -c 5 10.1.1.1
+    cd ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/root
+    for package in $SLAPT_PACKAGES ; do
+        this_package="$SLAPT_MIRROR/$package"
+        echo "Retrieving $this_package"
+        wget -nv -c $this_package
+        installpkg --root ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs --terse $package
+    done
+
+    # Setup environment
+    cat <<EOF >>${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/root/.spbuilderrc
+#!/bin/sh
+export HOME=/root
+export TERM=linux
+. /etc/profile
+export VISUAL=vi
+cd
+EOF
+    chmod a+x ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/root/.spbuilderrc
+
+    mv ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/etc/slapt-get/slapt-getrc ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/etc/slapt-get/slapt-getrc.orig
+    # SPBUILDER_REPO may be defined in /etc/spbuilder/spbuilderrc
+    if [ -n "$SPBUILDER_REPO" ]; then
+        echo "Adding slapt-getrc from host"
+        cp -p /etc/slapt-get/slapt-getrc ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/etc/slapt-get/slapt-getrc
+    else
+        echo "Adding slapt-getrc from $SPBUILDER_REPO_FILE"
+        mkdir -p ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/etc/slapt-get
+        . $SPBUILDER_REPO_FILE
+        for entry in $SPBUILDER_REPO ; do
+            echo "$entry" >>${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/etc/slapt-get/slapt-getrc
+        done
+    fi
+    # Add any directories implied in the slapt-getrc
+    repo_rcfile=${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/etc/slapt-get/slapt-getrc
+    xdirs=$(get_extra_dirs)
+    for xdir in $xdirs ; do
+        mkdir -p ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/$xdir
+        echo "$xdir ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/$xdir none rw,bind    0    0" \
+            >>${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/etc/fstab
+    done
+
+    # Enable DHCP networking
+    cd ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/
+    sed -i -e 's/USE_DHCP\[0\]=""/USE_DHCP[0]="yes"/' etc/rc.d/rc.inet1.conf
+
+    # Add slackbuilds & spbuilder directories
+    echo "Setting mount for $SPBUILDER_SLACKBUILDS"
+    sed -i -e "s:^lxc.mount.auto.:\
+lxc.mount.entry = $SPBUILDER_SLACKBUILDS mnt/slackbuilds none bind,ro,create=dir 0 0\n\
+lxc.mount.entry = $SPBUILDER_BASE var/cache/spbuilder none bind,create=dir 0 0\n\
+&:" ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/config
+
+    # Setup hoorex
+    SPB_WRAPPER=$(tempfile)
+    sed -e "s/%SPB_SHUTDOWN%/$SPB_SHUTDOWN/" ${SPBUILDER_DATA_DIR}/spbuilder.create.in >$SPB_WRAPPER
+    cp $SPB_WRAPPER ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/usr/bin/spbuilder.create
+    chmod a+x ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/usr/bin/spbuilder.create
+
+    lxc-start -n ${SPBUILDER_MASTER_NAME}
+    lxc-wait -n ${SPBUILDER_MASTER_NAME} -s RUNNING
+    lxc-attach -n ${SPBUILDER_MASTER_NAME} --clear-env -a $ARCH -- /usr/bin/spbuilder.create
+
+    # Cleanup
+    rm $SPB_WRAPPER
+
+    # Insert a random password
+    echo $"Changing password to something obscure"
+    echo "root:$(random_string)" | chroot ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs chpasswd
+
+    echo $"New spbuilder container created at >${lxc_base_dir}/${SPBUILDER_MASTER_NAME}"
+}
+
+function update_container ()
+{
+    lxc-info -n $SPBUILDER_MASTER_NAME -s | grep RUNNING 2>&1 >/dev/null
+    if [ "$?" = "0" ]; then
+        echo "$SPBUILDER_MASTER_NAME is already running. Exiting now ..."
+        exit 4
+    fi
+    echo $"Update an existing build container"
+
+#    # Add any directories implied in the slapt-getrc
+#    repo_rcfile=${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/etc/slapt-get/slapt-getrc
+#    xdirs=$(get_extra_dirs)
+#    for xdir in $xdirs ; do
+#        mkdir -p ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/$xdir
+#        echo "$xdir ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/$xdir none rw,bind    0    0" \
+#            >>${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/etc/fstab
+#    done
+
+    SPB_WRAPPER=$(tempfile)
+    sed -e "s/%SPB_SHUTDOWN%/$SPB_SHUTDOWN/" spbuilder.update.in >$SPB_WRAPPER
+    cp $SPB_WRAPPER ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/usr/bin/spbuilder.update
+    chmod a+x ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/usr/bin/spbuilder.update
+
+    # Now try to run it
+    echo -n "Trying to start container $SPBUILDER_MASTER_NAME for update ... "
+    lxc-start -n $SPBUILDER_MASTER_NAME
+    lxc-wait -n $SPBUILDER_MASTER_NAME -s RUNNING
+    echo "OK"
+    lxc-attach -n $SPBUILDER_MASTER_NAME --clear-env -a $ARCH -- /usr/bin/spbuilder.update
+
+    rm $SPB_WRAPPER
+    echo $"spbuilder update all done OK"
+    exit
+}
+
+function build_package ()
+{
+    echo $"Build package - start time: $(date)"
+    local build_start_time=$(date +%s)
+
+    # Check that the right argument was passed
+    if [ -z "$source_location" ]; then
+        echo $"" >&2
+        echo $"Error! Invalid number of parameters passed." >&2
+        echo $"Usage: build -s <source directory | build tarball>" >&2
+        exit 1
+    fi
+
+    # source_location should be a category/pkgname based at $SPBUILDER_BASE/slackbuilds
+    if [ -d "$SPBUILDER_BASE/slackbuilds/$source_location" ]; then
+        cd $SPBUILDER_BASE/slackbuilds/$source_location
+        BUILD_DIR=$(pwd)
+        cd - >/dev/null
+        #echo $"Using directory: $BUILD_DIR for building"
+    else
+        echo $"BAD LOCATION for building ($source_location)"
+        exit 3
+    fi
+
+    lxc-copy -n $SPBUILDER_MASTER_NAME -N $our_name -B overlayfs -s
+    echo "Created snapshot: $our_name"
+    SPB_WRAPPER=$(tempfile)
+    sed -e "s/%SPB_SHUTDOWN%/$SPB_SHUTDOWN/" ${SPBUILDER_DATA_DIR}/spbuilder.wrapper.in >$SPB_WRAPPER
+    lxc-start -n $our_name
+    lxc-wait -n $our_name -s RUNNING
+    lxc-attach -n $our_name -a $ARCH -- touch /usr/bin/spbuilder.build /usr/bin/spbuilder.wrapper
+    cp ${SPBUILDER_DATA_DIR}/spbuilder.build ${lxc_base_dir}/${our_name}/delta0/usr/bin/spbuilder.build
+    cp $SPB_WRAPPER ${lxc_base_dir}/${our_name}/delta0/usr/bin/spbuilder.wrapper
+    chmod a+x ${lxc_base_dir}/${our_name}/delta0/usr/bin/spbuilder.build ${lxc_base_dir}/${our_name}/delta0/usr/bin/spbuilder.wrapper
+    lxc-attach -n $our_name --clear-env -a $ARCH -- /usr/bin/spbuilder.wrapper $source_location
+
+    # Cleanup
+    rm $SPB_WRAPPER
+echo "in spbuilder, SPB_SHUTDOWN=$SPB_SHUTDOWN"
+    if [ $SPB_SHUTDOWN -eq 1 ]; then
+        lxc-destroy -f -n $our_name
+    fi
+exit
+
+    # Setup slapt-getrc and add any directories implied by it i.e. "SOURCE=file://..." entries
+    mv ${lxc_base_dir}/$our_name/rootfs/etc/slapt-get/slapt-getrc ${lxc_base_dir}/$our_name/rootfs/etc/slapt-get/slapt-getrc.orig
+    # SPBUILDER_REPO may be defined in /etc/spbuilder/spbuilderrc
+    if [ -z "$SPBUILDER_REPO" ]; then
+        cp -p /etc/slapt-get/slapt-getrc ${lxc_base_dir}/${our_name}/rootfs/etc/slapt-get/slapt-getrc
+    else
+        touch ${lxc_base_dir}/${our_name}/rootfs/etc/slapt-get/slapt-getrc
+        for entry in $SPBUILDER_REPO ; do
+            echo "$entry" >>${lxc_base_dir}/${our_name}/rootfs/etc/slapt-get/slapt-getrc
+        done
+    fi
+    echo "" >>${lxc_base_dir}/${our_name}/rootfs/etc/slapt-get/slapt-getrc
+    # Add any directories implied in the slapt-getrc
+    repo_rcfile=${lxc_base_dir}/${our_name}/rootfs/etc/slapt-get/slapt-getrc
+    xdirs=$(get_extra_dirs)
+    for xdir in $xdirs ; do
+        mkdir -p ${lxc_base_dir}/${our_name}/rootfs/$xdir
+        echo "$xdir ${lxc_base_dir}/${our_name}/rootfs/$xdir none rw,bind    0    0" \
+            >>${lxc_base_dir}/${our_name}/rootfs/etc/fstab
+    done
+
+}
+
+function early_out ()
+{
+    echo
+    echo "Caught signal - finishing up now!"
+
+chroot ${lxc_base_dir}/$our_name/rootfs shutdown -h now
+
+    lxc-stop -n $our_name
+    ( cd ${lxc_base_dir}
+      [ -e ${our_name}/config.run ] && \
+        cp -p ${our_name}/config.run ${our_name}/config
+    )
+    lxc-destroy -n $our_name
+    /sbin/ifconfig $our_name down
+    /usr/sbin/brctl delbr $our_name
+    # If we used an spbuilder directory for building
+    # (this generally means building from a supplied tarball), remove it
+    rm -rf ${DEFAULT_BUILD_DIR}/$our_name
+    rm -rfv $our_pivotdir
+
+    echo " Finished (early)"
+}
+
+# Full cleanout of files likely to have been generated
+# during normal operation
+function full_cleanup ()
+{
+    echo "Full cleanup (could take a while)"
+
+    echo -n "Remove /var/cache/lxc/spbuilder ... "
+    rm -rf /var/cache/lxc/spbuilder && echo "OK"
+
+    echo -n "Remove ${SPBUILDER_BASE}/${spbuilder_base_name}.tar.gz ... "
+    rm -rf ${SPBUILDER_BASE}/${spbuilder_base_name}.tar.gz && echo "OK"
+
+    echo -n "Remove contents of ${SPBUILDER_BASE}/build ... "
+    rm -rf ${SPBUILDER_BASE}/build/* && echo "OK"
+
+    echo -n "Remove contents of ${SPBUILDER_BASE}/result ... "
+    rm -rf ${SPBUILDER_BASE}/result/* && echo "OK"
+
+    echo -n "Remove contents of ${SPBUILDER_BASE}/log ... "
+    rm -rf ${SPBUILDER_BASE}/log/* && echo "OK"
+
+    echo -n "Remove contents of ${SPBUILDER_BASE}/distfiles ... "
+    rm -rf ${SPBUILDER_BASE}/distfiles/* && echo "OK"
+
+    # Typical previous location for slackbuilds tree
+    mountpoint --quiet $SPBUILDER_BASE/slackbuilds
+    if [ $? -eq 0 ]; then
+        echo -n "Unmount spbuilder's slackbuilds ... "
+        umount ${SPBUILDER_BASE}/slackbuilds && echo "OK"
+    fi
+}
+
+function login2_container ()
+{
+    echo $"Log into build container"
+
+    # Now try to run it
+    echo -n "Trying to start container $our_name ... "
+    lxc-start -n $SPBUILDER_MASTER_NAME -d
+    lxc-wait -n $SPBUILDER_MASTER_NAME -s RUNNING
+    echo "OK"; echo
+    echo "For basic environment, run:"
+    echo "        . /root/.spbuilderrc"
+    echo
+    echo "To exit, run:"
+    echo "        shutdown -h now"
+    echo
+    lxc-attach -n $SPBUILDER_MASTER_NAME --clear-env -a $ARCH
+
+}
+
+#############################
+####                     ####
+#### Program Starts Here ####
+####                     ####
+#############################
+
+# Parse command line arguments
+while [ $# -gt 0 ]; do
+    case $1 in
+
+    --source*|-s)
+        if echo $1 | grep '=' >/dev/null ; then
+            source_location=`echo $1 | sed 's/^.*=//'`
+        else
+            source_location="$2"
+            shift
+        fi
+        ;;
+    --local-dir|-l)
+        if echo $1 | grep '=' >/dev/null ; then
+            this_local_dir=`echo $1 | sed 's/^.*=//'`
+        else
+            this_local_dir="$2"
+            shift
+        fi
+        if [ -z $local_dirs ]; then
+            local_dirs="$this_local_dir"
+        else
+            local_dirs="${local_dirs} ${this_local_dir}"
+        fi
+        ;;
+    --password|-p)
+        update_password="true"
+        ;;
+
+    -*|--*)
+        echo $"" >&2
+        echo $"Error!  Unknown option: $1" >&2
+        show_usage
+        exit 2
+        ;;
+    *)
+        action="$action $1"
+        ;;
+    esac
+    shift
+done
+
+[ -z $action ] && {
+        echo "" >&2
+        echo $"Error! No action was specified.">&2
+        show_usage
+}
+
+# Run the specified action
+for action_to_run in $action; do
+    case "$action_to_run" in
+    create)
+        mkdir -p $BUILD_LOGDIR
+        logfile=${BUILD_LOGDIR}/create-$(date +"%Y%m%d-%H%M%S")
+        create_container
+        ;;
+    update)
+        mkdir -p $BUILD_LOGDIR
+        logfile=${BUILD_LOGDIR}/update-$(date +"%Y%m%d-%H%M%S")
+        update_container
+        ;;
+    build)
+        mkdir -p $BUILD_LOGDIR
+        logfile=${BUILD_LOGDIR}/build-$(date +"%Y%m%d-%H%M%S")
+        #build_package 2>&1 |tee $logfile
+        build_package
+        ;;
+    clean)
+        full_cleanup
+        ;;
+    login)
+        login2_container
+        ;;
+    "")
+        echo "" >&2
+        echo $"Error! No action was specified.">&2
+        show_usage
+        ;;
+    *)
+        echo "" >&2
+        echo $"Error! Unknown action specified: $action_to_run" >&2
+        show_usage
+        ;;
+    esac
+done
+

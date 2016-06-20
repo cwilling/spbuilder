@@ -1,0 +1,93 @@
+#!/bin/sh
+#
+# ex:set ai shiftwidth=4 inputtab=spaces smarttab noautotab:
+#
+
+
+SPB_SHUTDOWN=${SPB_SHUTDOWN:-1}
+LANG=${LANG:-"en_AU.utf8"}
+ARCH=${ARCH:-`uname -m`}
+PREREQS=""
+SPBUILDER_BASE=${SPBUILDER_BASE:-/var/cache/spbuilder}
+
+sed -i -e "s/^export LANG=.*/export LANG=$LANG/" /etc/profile.d/lang.sh
+. /root/.spbuilderrc
+
+# Wait for network
+tries=0
+while test $tries -lt 10 ; do
+	echo "Waiting for network ... [$tries]"
+	ping -q -c 1 10.1.1.1 2>/dev/null
+	if test $? -eq 0 ; then
+		break
+	fi
+	tries=$(expr $tries + 1)
+	sleep 1
+done
+
+
+BUILD_LOC="$1"
+BUILD_JOBNAME=$(basename $BUILD_LOC)
+BUILD_DIR=$SPBUILDER_BASE/build
+
+slapt-get --update
+slapt-get --upgrade -y
+
+cd $BUILD_DIR
+cp -a /mnt/slackbuilds/$BUILD_LOC .
+cd $BUILD_JOBNAME
+source ./${BUILD_JOBNAME}.info
+if [ "$ARCH" = "x86_64" -a "$DOWNLOAD_x86_64" != "" -a "$DOWNLOAD_x86_64" != "UNSUPPORTED" ]; then
+    spb_source_tarball_url=$DOWNLOAD_x86_64
+else
+    spb_source_tarball_url=$DOWNLOAD
+fi
+# Deal with DOWNLOAD containing multiple source tarballs
+for vsturl in $spb_source_tarball_url ; do
+    spb_source_tarball_name=$(basename $vsturl)
+    cp $SPBUILDER_BASE/distfiles/$spb_source_tarball_name . 2>/dev/null || true
+    if [ ! -e $spb_source_tarball_name ]; then
+        echo "doing wget $vsturl"
+        wget $vsturl || {
+            echo "FAILED: wget $vsturl - Exiting container now!"
+            [ $SPB_SHUTDOWN -eq 1 ] && shutdown -h now
+        }
+    fi
+done
+
+echo "PREREQS = $PREREQS"
+slapt-get --install  -y $PREREQS
+
+# Special environment settings requested in .info
+for envopt in $ENVOPTS ; do
+    echo "exporting $envopt"
+    export $envopt
+done
+
+# Do the build
+time \
+MAKEFLAGS=${MAKEFLAGS:-"-j7"} \
+OUTPUT=/var/cache/spbuilder/result/ \
+PKGTYPE=txz \
+TAG=${TAG:-_uqv} \
+sh ./${BUILD_JOBNAME}.SlackBuild
+
+if [ $SPB_SHUTDOWN -eq 1 ]; then
+    # Cleanup first
+    for vsturl in $spb_source_tarball_url ; do
+        spb_source_tarball_name=$(basename $vsturl)
+        if [ ! -e $SPBUILDER_BASE/distfiles/$spb_source_tarball_name ]; then
+            echo "Saving source tarball $spb_source_tarball_name in $SPBUILDER_BASE/distfiles"
+            mv $spb_source_tarball_name $SPBUILDER_BASE/distfiles
+        else
+            rm $spb_source_tarball_name
+        fi
+    done
+    cd
+    rm -rf $BUILD_DIR/$BUILD_JOBNAME
+    echo "Shutting down now ..."
+    shutdown -h now
+else
+    echo "SPB_SHUTDOWN = 0 so keeping container $(hostname) running ..."
+fi
+
