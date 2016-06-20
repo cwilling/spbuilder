@@ -4,7 +4,7 @@
 #
 
 # Personal package builder for Slackware.
-# Copyright (C) 2011-2016  Christoph WIlling  Brisbane, Australia
+# Copyright (C) 2011-2016  Christoph Willing  Brisbane, Australia
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -84,13 +84,9 @@ umask 022
 unset CC CXX CFLAGS CXXFLAGS LDFLAGS
 action=""
 source_location=""
-update_password=""
 logfile=""
 repo_rcfile=""
 local_dirs=""
-
-spbuilder_base_name=base_1402
-default_route_device=${SPBUILDER_DEFAULT_ROUTE:-$(/sbin/route | grep default | awk '{print $8}'|uniq)}
 lxc_base_dir=/var/lib/lxc
 
 trap early_out 1 2
@@ -155,7 +151,7 @@ function show_usage ()
     echo $"  [action]  = { create | update | build | login | clean }"
 }
 
-# Function create_container builds a minimal 'master' LXC container
+# Function create_container() builds a minimal 'master' LXC container
 # with additional packages for general development, from which
 # snapshot containers will be cloned to do actual package building.
 # 
@@ -174,7 +170,6 @@ function create_container ()
     --template spbuilder-1402 \
     -- -a $ARCH
 
-    ping -c 5 10.1.1.1
     cd ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/root
     for package in $SLAPT_PACKAGES ; do
         this_package="$SLAPT_MIRROR/$package"
@@ -381,9 +376,6 @@ function full_cleanup ()
     echo -n "Remove /var/cache/lxc/spbuilder ... "
     rm -rf /var/cache/lxc/spbuilder && echo "OK"
 
-    echo -n "Remove ${SPBUILDER_BASE}/${spbuilder_base_name}.tar.gz ... "
-    rm -rf ${SPBUILDER_BASE}/${spbuilder_base_name}.tar.gz && echo "OK"
-
     echo -n "Remove contents of ${SPBUILDER_BASE}/build ... "
     rm -rf ${SPBUILDER_BASE}/build/* && echo "OK"
 
@@ -453,9 +445,6 @@ while [ $# -gt 0 ]; do
         else
             local_dirs="${local_dirs} ${this_local_dir}"
         fi
-        ;;
-    --password|-p)
-        update_password="true"
         ;;
 
     -*|--*)
