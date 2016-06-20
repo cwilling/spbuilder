@@ -39,7 +39,7 @@ lsmod | grep overlay 2>&1 >/dev/null
 }
 lsmod | grep overlay 2>&1 >/dev/null
 [ $? -eq 0 ] || {
-  echo $"The overay kernel module could not be loaded. Exiting now ..."
+  echo $"The overlay kernel module could not be loaded. Exiting now ..."
   exit 2
 }
 
@@ -76,7 +76,6 @@ SPBUILDER_CONF=${SPBUILDER_CONF:-/etc/spbuilder/spbuilder-1402.conf}
 SPBUILDER_BASE=${SPBUILDER_BASE:-/var/cache/spbuilder}
 DEFAULT_BUILD_DIR=${SPBUILDER_BASE}/build
 BUILD_LOGDIR=${SPBUILDER_BASE}/log
-NAT_BASE_ADDR=${NAT_BASE_ADDR:-10.72}
 SPB_SHUTDOWN=${SPB_SHUTDOWN:-1}
 LANG=${LANG:-"en_AU.utf8"}
 echo "SPB_SHUTDOWN on error is $SPB_SHUTDOWN"
@@ -85,8 +84,6 @@ umask 022
 unset CC CXX CFLAGS CXXFLAGS LDFLAGS
 action=""
 source_location=""
-build_tarball=""
-package_tag="_uqv"
 update_password=""
 logfile=""
 repo_rcfile=""
@@ -95,24 +92,6 @@ local_dirs=""
 spbuilder_base_name=base_1402
 default_route_device=${SPBUILDER_DEFAULT_ROUTE:-$(/sbin/route | grep default | awk '{print $8}'|uniq)}
 lxc_base_dir=/var/lib/lxc
-
-FLOOR=2
-CEIL=252
-nat_net=${NAT_BASE_ADDR}.256 ;# something illegal i.e. needs to be set somewhere
-while true ; do
-    number=0
-    while [ "$number" -le $FLOOR ]; do
-        number=$RANDOM
-        let "number %= $CEIL"
-    done
-    ping -c1 -W1 ${NAT_BASE_ADDR}.${number}.1 2>&1 >/dev/null
-    # if ping fails, we'll use this network
-    if [ $? -ne 0 ]; then
-        nat_net=${NAT_BASE_ADDR}.${number}
-        break
-    fi
-done
-#echo "NAT network = $nat_net"
 
 trap early_out 1 2
 
@@ -150,61 +129,6 @@ function get_extra_dirs()
     done
 
     echo $extra_dirs_result
-}
-
-function setup_network ()
-{
-    echo $"Setting up network:"
-    echo $"    Our temporary name = $our_name"
-    #echo $"    nat_net = $nat_net"
-    echo $"    default_route_device = $default_route_device"
-
-    # Create the NAT network
-    echo 1 > /proc/sys/net/ipv4/ip_forward    # Enables packet forwarding by kernel
-    /sbin/brctl addbr $our_name
-    /sbin/brctl setfd $our_name 0
-    /sbin/ifconfig $our_name ${nat_net}.1 netmask 255.255.255.0 promisc up
-    /usr/sbin/iptables -t nat -A POSTROUTING -o $default_route_device -j MASQUERADE
-}
-
-function restore_container_tags ()
-{
-    #echo $"restore container tags ..."
-    ( cd ${lxc_base_dir}
-        # config file
-        mv ${our_name}/config.bu_$our_name ${our_name}/config
-
-        # container's network
-        mv ${our_name}/rootfs/etc/rc.d/rc.inet1.conf.bu_$our_name ${our_name}/rootfs/etc/rc.d/rc.inet1.conf
-
-        # container's fstab
-        mv ${our_name}/rootfs/etc/fstab.bu_$our_name ${our_name}/rootfs/etc/fstab
-    )
-}
-
-function setup_container_common ()
-{
-    #echo $"common network setup ..."
-    ( cd ${lxc_base_dir}
-        # config file
-        # first save a copy for restore_container_tags()
-        cp -p ${our_name}/config ${our_name}/config.bu_$our_name
-        sed -i -e "s/LXC_NETWORK_LINK/${our_name}/" ${our_name}/config
-        sed -i -e "s/LXC_NETWORK_IPV4/${NAT_BASE_ADDR}.${number}.${number}\/24/" ${our_name}/config
-        sed -i -e "s/LXC_UTSNAME/${our_name}/g" ${our_name}/config
-        cp -p ${our_name}/config ${our_name}/config.run
-
-        # container's network
-        cp -p ${our_name}/rootfs/etc/rc.d/rc.inet1.conf ${our_name}/rootfs/etc/rc.d/rc.inet1.conf.bu_$our_name
-        sed -i -e "s/LXC_IPADDR/${NAT_BASE_ADDR}.${number}.${number}/" ${our_name}/rootfs/etc/rc.d/rc.inet1.conf
-        sed -i -e "s/LXC_NETMASK/255.255.255.0/" ${our_name}/rootfs/etc/rc.d/rc.inet1.conf
-        sed -i -e "s/LXC_GATEWAY/${NAT_BASE_ADDR}.${number}.1/" ${our_name}/rootfs/etc/rc.d/rc.inet1.conf
-
-        # containers fstab
-        cp -p ${our_name}/rootfs/etc/fstab ${our_name}/rootfs/etc/fstab.bu_$our_name
-        sed -i -e "s/LXC_UTSNAME/${our_name}/g" ${our_name}/rootfs/etc/fstab
-        cp -p /etc/resolv.conf ${our_name}/rootfs/etc/
-    )
 }
 
 function _print_elapsed_time ()
@@ -264,8 +188,8 @@ function create_container ()
 #!/bin/sh
 export HOME=/root
 export TERM=linux
-. /etc/profile
 export VISUAL=vi
+. /etc/profile
 cd
 EOF
     chmod a+x ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/root/.spbuilderrc
