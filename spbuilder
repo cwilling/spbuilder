@@ -19,6 +19,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+PATH=/sbin:/usr/sbin:$PATH
+
 # Must be root
 #
 [ $EUID -eq 0 ] || {
@@ -26,10 +28,24 @@
   exit 1
 }
 
+# Must have overlay kernel module loaded
+# (actually only for the build command
+# but better to know/fix early on).
+#
+lsmod | grep overlay 2>&1 >/dev/null
+[ $? -eq 0 ] || {
+  modprobe overlay
+  sleep 2
+}
+lsmod | grep overlay 2>&1 >/dev/null
+[ $? -eq 0 ] || {
+  echo $"The overay kernel module could not be loaded. Exiting now ..."
+  exit 2
+}
+
 export PATH=/sbin:/usr/sbin:$PATH
 SPBUILDER_VERSION=
 SPBUILDER_DATA_DIR=/usr/share/spbuilder
-#SPBUILDER_DATA_DIR=/scratch/PKG/spbuilder/14.2/spbuilder-0.60
 SPBUILDER_SYSTEM_DIR=/etc/spbuilder
 [ -f ${SPBUILDER_SYSTEM_DIR}/spbuilderrc ] && source ${SPBUILDER_SYSTEM_DIR}/spbuilderrc
 
