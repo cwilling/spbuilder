@@ -1,7 +1,9 @@
 # spbuilder
 ###SlackBuilds Personal Builder
 
-The idea is to run SlackBuilds from slackbuilds.org (SBo) in a minimal Slackware installation containing only the packages needed for a particular SlackBuild to succeed. Functionality is provided by the command line utility **spbuilder**, to which commands and possibly options are supplied.
+The idea is to run SlackBuilds from slackbuilds.org (SBo) in a minimal Slackware installation containing only the packages needed for a particular SlackBuild to succeed. We deal with a particular category of SlackBuilds with **spbuilder**, namely those extended to generate dependency information for use by package management systems such as [slapt-get](http://www.jaos.org). Since a normal SBo SlackBuild's .info file specifies packages required for building with the assumption of running on a fully installed Slackware system and because we run **spbuilder** in only a minimal installation, we extend .info files with an additional *PREREQS* field to specify the need for any stock Slackware packages not already available in the minimal system. It is convenient, although not essential, to keep these changes to SlackBuilds in a dedicated branch of the official SBo repository. An example is the [spbuilder branc here](https://github.com/cwilling/slackbuilds/tree/spbuilder).
+
+Build functionality is provided by the command line utility **spbuilder**, to which commands and possibly options are supplied.
 
 We maintain base LXC containers for x86_64 & i686 architectures using the *create*, *update*, *login* or *clean* commands to **spbuilder** e.g.
 
