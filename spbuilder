@@ -269,7 +269,7 @@ function update_container ()
 #    done
 
     SPB_WRAPPER=$(tempfile)
-    sed -e "s/%SPB_SHUTDOWN%/$SPB_SHUTDOWN/" spbuilder.update.in >$SPB_WRAPPER
+    sed -e "s/%SPB_SHUTDOWN%/$SPB_SHUTDOWN/" ${SPBUILDER_DATA_DIR}/spbuilder.update.in >$SPB_WRAPPER
     cp $SPB_WRAPPER ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/usr/bin/spbuilder.update
     chmod a+x ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/usr/bin/spbuilder.update
 
