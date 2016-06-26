@@ -1,4 +1,5 @@
 SOURCES = \
+	sb_autogen_slack-required.2.7 \
 	lxc-spbuilder-1402 \
 	spbuilder \
 	spbuilder-1402.conf \
@@ -35,6 +36,7 @@ install: build man
 	install -m 0755 spbuilder.update.in $(DESTDIR)/usr/share/spbuilder
 	install -m 0755 spbuilder.wrapper.in $(DESTDIR)/usr/share/spbuilder
 	install -m 0755 spbuilder_repo.{i686,x86_64} $(DESTDIR)/usr/share/spbuilder
+	install -m 0755 sb_autogen_slack-required.2.7 $(DESTDIR)/usr/share/spbuilder
 
 
 

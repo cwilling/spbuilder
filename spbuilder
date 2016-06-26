@@ -51,24 +51,30 @@ SPBUILDER_SYSTEM_DIR=/etc/spbuilder
 
 ARCH=${ARCH:-`uname -m`}
 subarch=
-if [ "$ARCH" == "x86_64" ]; then
-    subarch=64
-    SPBUILDER_REPO_FILE=$SPBUILDER_DATA_DIR/spbuilder_repo.x86_64
-    SLAPT_PACKAGES="
-        slapt-get-0.10.2q-$ARCH-1_uqv.txz
-        slaptgetwrapper-1.0-noarch-3_uqv.txz
-        slackbuilds-0.4.63-noarch-1_uqv.txz
-        hoorex-0.6.0-$ARCH-1_uqv.txz
-    "
-else
-    SPBUILDER_REPO_FILE=$SPBUILDER_DATA_DIR/spbuilder_repo.i686
-    SLAPT_PACKAGES="
-        slapt-get-0.10.2q-i386-1_uqv.txz
-        slaptgetwrapper-1.0-noarch-3_uqv.txz
-        slackbuilds-0.4.63-noarch-1_uqv.txz
-        hoorex-0.6.0-i486-1_SBo.txz
-    "
-fi
+case $ARCH in
+    x86_64)
+        subarch=64
+        SPBUILDER_REPO_FILE=$SPBUILDER_DATA_DIR/spbuilder_repo.x86_64
+        SLAPT_PACKAGES="
+            slapt-get-0.10.2q-$ARCH-1_uqv.txz
+            slaptgetwrapper-1.0-noarch-3_uqv.txz
+            hoorex-0.6.0-$ARCH-1_uqv.txz
+        "
+        ;;
+    i?86)
+        SPBUILDER_REPO_FILE=$SPBUILDER_DATA_DIR/spbuilder_repo.i686
+        SLAPT_PACKAGES="
+            slapt-get-0.10.2q-i386-1_uqv.txz
+            slaptgetwrapper-1.0-noarch-3_uqv.txz
+            hoorex-0.6.0-i486-1_SBo.txz
+        "
+        ;;
+    *)
+        echo "Unknown ARCH ($ARCH). Exiting now ..."
+        exit 1
+        ;;
+esac
+PYTHON_VERSION=${PYTHON_VERSION:-`python -c "import sys; print sys.version[:3]"`}
 SPBUILDER_MASTER_NAME=${SPBUILDER_MASTER_NAME:-spbuilder-SL14.2-$ARCH}
 SLAPT_MIRROR=${SLAPT_MIRROR:-http://darlo.selfip.org/slackware$subarch/14.2}
 SPBUILDER_MIRROR=${SPBUILDER_MIRROR:-http://ftp.iinet.net.au/linux/slackware}
@@ -177,6 +183,8 @@ function create_container ()
         wget -nv -c $this_package
         installpkg --root ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs --terse $package
     done
+    cp ${SPBUILDER_DATA_DIR}/sb_autogen_slack-required.$PYTHON_VERSION ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/usr/bin/sb_autogen_slack-required
+    chmod 0755  ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/usr/bin/sb_autogen_slack-required
 
     # Setup environment
     cat <<EOF >>${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/rootfs/root/.spbuilderrc
