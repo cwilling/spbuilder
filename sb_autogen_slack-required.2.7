@@ -1,0 +1,209 @@
+#!/usr/bin/env python
+
+# Copyright (c) 2009, Christoph Willing c.willing@uq.edu.au
+# 
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+
+import sys
+import os
+from os.path import islink, realpath
+import subprocess
+
+pkgdir = '/var/log/packages'
+
+
+def find_package(target=None):
+    '''
+    Name: find_package
+    Paramaters: 
+        target=None
+
+    Given the name of a file (any file, but typically a library)
+    search for its existence in the record of all packages
+    installed on the system. Ideally it would only be found
+    once but, in any case, we stop searching after finding the
+    first occurence.
+
+    Returns either:
+        package name in which the target was found
+    or:
+        None
+    '''
+    #print target
+    packageFound = False
+    packageFoundName = ""
+    for pkg in os.listdir(pkgdir):
+        if not packageFound:
+            for line in open(os.path.join(pkgdir, pkg)):
+                if target in line:
+                    packageFound = True
+                    packageFoundName = pkg
+                    break
+        else:
+            break
+
+    if packageFound:
+        return packageFoundName
+    else:
+        #print "Couldn't find anything for", target
+        return None
+
+def shortPackageName(fullName=None):
+
+    '''
+    Name: shortPackageName
+    Parameters:
+        fullName=None
+
+    Given a full package name, return just the name and
+    version components i.e. no architecture or build
+
+    Returns:
+        Tuple of package name and version
+    '''
+    if fullName is None:
+        return None
+
+    (nameverarch,sep,build) = fullName.rpartition('-')
+    (namever,sep,architecture) = nameverarch.rpartition('-')
+    (name,sep,version) = namever.rpartition('-')
+    return (name, version)
+
+def unique(t=[]):
+    '''
+    Name: unique
+    Parameters:
+        t=[]
+
+    Remove duplicate members
+    Returns:
+        a list without any duplicate members
+
+    From: http://code.activestate.com/recipes/52560/
+    '''
+    n = len(t)
+    if n == 0:
+        return []
+
+    t.sort()
+
+    assert n > 0
+    last = t[0]
+    lasti = i = 1
+    while i < n:
+        if t[i] != last:
+            t[lasti] = last = t[i]
+            lasti += 1
+        i += 1
+    #print "Prereturn list:", t
+    return t[:lasti]
+
+
+def verify_path(path=None):
+    if path is None:
+        return False
+    return os.path.exists(path)
+
+def write_required_file(destdir, uniquePkgsFound):
+    '''
+    Name: write_required_file
+    Parameters:
+        destdir - the directory in which to write
+        uniquePkgsFound - a list of tuples containing
+            the names and versions of packages to be
+            written
+
+    Write a slack-required file into a directory (destdir)
+    Returns:
+        Nothing
+    '''
+    for fullname in uniquePkgsFound:
+        (shortname,version) = shortPackageName(fullname)
+        #print "%s  %s" % (shortname,version)
+
+    with open(os.path.join(destdir, 'slack-required'), 'w') as f:
+        for fullname in uniquePkgsFound:
+            (shortname,version) = shortPackageName(fullname)
+            #f.write('{0}\t>= {1}\n'.format(shortname, version))
+            f.write('{0}\n'.format(shortname))
+    f.close()
+
+
+def main(verified_paths=None, installdir=None):
+
+    if installdir is None:
+        return
+
+    pkgsFound = []
+    noPkgFound = []
+
+    #print "Verified Paths:", verified_paths
+    for path in verified_paths:
+        (libs, err) = subprocess.Popen(["ldd", path], stdout=subprocess.PIPE).communicate()
+        liblines = str(libs).split("\n")
+        if str(liblines[0]).endswith("not a dynamic executable"):
+            #print "%s is no good; ldd reports: %s" % (path, liblines)
+            continue
+
+        for line in liblines:
+            parts = line.split()
+            # is it a symbolic link
+            if len(parts) > 2:
+                pkgsearch = find_package(os.path.basename(os.path.realpath(parts[2])))
+                if pkgsearch is None:
+                    if parts[0].startswith('linux-vdso.so'):
+                        continue
+                    else:
+                        noPkgFound.append(parts)
+                else:
+                    pkgsFound.append(pkgsearch)
+
+    #print "Libs without packages:"
+    #print noPkgFound
+    #print "Packages found:"
+    #print pkgsFound
+
+    uniquePkgsFound = unique(pkgsFound)
+    #print "duplicates removed:\n", print uniquePkgsFound
+
+    write_required_file(installdir, uniquePkgsFound)
+
+
+if __name__ == "__main__":
+
+    verified_paths = []
+    test_paths = []
+    #test_paths = ['/usr/bin/vic', '/usr/bin/VenueClient3.py', '/usr/bin/xsane']
+
+    for path in test_paths:
+        if verify_path(path):
+            verified_paths.append(path)
+    for path in sys.argv[1:]:
+        if verify_path(path):
+            verified_paths.append(path)
+
+    '''
+    The directory to write to should already exist.
+    '''
+    try:
+        pkginstdir = os.environ['PKGINSTDIR']
+        if not os.path.isdir(pkginstdir):
+            print "Non existent write directory. Exiting now ..."
+            sys.exit(1)
+    except KeyError:
+        pkginstdir = os.getcwd()
+    #print "Write to %s directory" % pkginstdir
+
+    main(verified_paths, pkginstdir)
+
