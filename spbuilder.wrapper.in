@@ -1,6 +1,7 @@
 #!/bin/sh
 . /root/.spbuilderrc
 export SPB_SHUTDOWN=%SPB_SHUTDOWN%
+export TAG=_SBo
 LOGFILE=/var/cache/spbuilder/log/build-$(date +"%Y%m%d-%H%M%S")
 echo "Logging to: $LOGFILE"
 sleep 5
