@@ -55,8 +55,14 @@ for vsturl in $spb_source_tarball_url ; do
     fi
 done
 
-echo "PREREQS = $PREREQS"
-slapt-get --install  -y $PREREQS
+echo "Installing PREREQS = $PREREQS"
+slapt-get --install -no-prompt $PREREQS
+
+# Set up environment
+for f in /etc/profile.d/*.sh ; do
+    echo "Sourcing $f"
+    . $f
+done
 
 # Special environment settings requested in .info
 for envopt in $ENVOPTS ; do
@@ -90,4 +96,5 @@ if [ $SPB_SHUTDOWN -eq 1 ]; then
 else
     echo "SPB_SHUTDOWN = 0 so keeping container $(hostname) running ..."
 fi
+echo "Logged to: $LOGFILE"
 
