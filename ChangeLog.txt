@@ -1,3 +1,7 @@
+20160722 CKW
+  - 0.61
+  - Use 14.2 (now that it's released) rather than current.
+
 20160613 CKW
   - 0.60
   - Redo using overlayfs instead of unpacking tarball

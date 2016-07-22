@@ -454,8 +454,8 @@ if [ "$(id -u)" != "0" ]; then
 	exit 1
 fi
 
-# If no release version was specified, use current
-release=${release:-current}
+# If no release version was specified, use 14.2
+release=${release:-14.2}
 
 if [ -z "$name" ]; then
 	# no name given? set a default one

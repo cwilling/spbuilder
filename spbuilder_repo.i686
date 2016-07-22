@@ -1,7 +1,7 @@
 SPBUILDER_REPO="
 WORKINGDIR=/var/slapt-get
 EXCLUDE=x86_84,sysvinit-scripts
-SOURCE=http://ftp.iinet.net.au/linux/slackware/slackware-current/:OFFICIAL
-SOURCE=http://ftp.iinet.net.au/linux/slackware/slackware-current/extra/:OFFICIAL
+SOURCE=http://ftp.iinet.net.au/linux/slackware/slackware-14.2/:OFFICIAL
+SOURCE=http://ftp.iinet.net.au/linux/slackware/slackware-14.2/extra/:OFFICIAL
 SOURCE=http://darlo.selfip.org/slackware/14.2/:CUSTOM
 "
