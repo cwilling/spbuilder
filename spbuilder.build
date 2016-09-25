@@ -72,6 +72,7 @@ done
 
 # Do the build
 time \
+SHELL=${SHELL:-/bin/bash} \
 MAKEFLAGS=${MAKEFLAGS:-"-j7"} \
 OUTPUT=/var/cache/spbuilder/result/ \
 PKGTYPE=txz \
