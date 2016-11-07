@@ -230,6 +230,8 @@ lxc.mount.entry = $SPBUILDER_SLACKBUILDS mnt/slackbuilds none bind,ro,create=dir
 lxc.mount.entry = $SPBUILDER_BASE var/cache/spbuilder none bind,create=dir 0 0\n\
 &:" ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/config
 
+    echo "lxc.hook.stop = /usr/share/spbuilder/spbuilder.stop" >> ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/config
+
     # Setup hoorex
     SPB_WRAPPER=$(tempfile)
     sed -e "s/%SPB_SHUTDOWN%/$SPB_SHUTDOWN/" ${SPBUILDER_DATA_DIR}/spbuilder.create.in >$SPB_WRAPPER
@@ -309,11 +311,17 @@ function build_package ()
         exit 3
     fi
 
-    lxc-copy -n $SPBUILDER_MASTER_NAME -N $our_name -B overlayfs -s
+    env build_jobname=${SPBUILDER_BASE}/build/$(basename $source_location) \
+    lxc-copy \
+	--name $SPBUILDER_MASTER_NAME \
+	--newname=$our_name \
+	-B overlayfs \
+	--ephemeral
+	# -e|--ephemeral implies --snapshot
     echo "Created snapshot: $our_name"
     SPB_WRAPPER=$(tempfile)
     sed -e "s/%SPB_SHUTDOWN%/$SPB_SHUTDOWN/" ${SPBUILDER_DATA_DIR}/spbuilder.wrapper.in >$SPB_WRAPPER
-    lxc-start -n $our_name
+    # -e|--ephemeral already starts the copied container lxc-start -n $our_name
     lxc-wait -n $our_name -s RUNNING
     lxc-attach -n $our_name -a $ARCH -- touch /usr/bin/spbuilder.build /usr/bin/spbuilder.wrapper
     cp ${SPBUILDER_DATA_DIR}/spbuilder.build ${lxc_base_dir}/${our_name}/delta0/usr/bin/spbuilder.build

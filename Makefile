@@ -4,6 +4,7 @@ SOURCES = \
 	spbuilder \
 	spbuilder-1402.conf \
 	spbuilder.build \
+	spbuilder.stop \
 	spbuilder.create.in \
 	spbuilder.update.in \
 	spbuilder.wrapper.in \
@@ -32,6 +33,7 @@ install: build man
 	install -m 0755 spbuilder-1402.conf $(DESTDIR)/etc/spbuilder
 	install -m 0755 -T spbuilderrc.default $(DESTDIR)/etc/spbuilder/spbuilderrc
 	install -m 0755 spbuilder.build $(DESTDIR)/usr/share/spbuilder
+	install -m 0755 spbuilder.stop $(DESTDIR)/usr/share/spbuilder
 	install -m 0755 spbuilder.create.in $(DESTDIR)/usr/share/spbuilder
 	install -m 0755 spbuilder.update.in $(DESTDIR)/usr/share/spbuilder
 	install -m 0755 spbuilder.wrapper.in $(DESTDIR)/usr/share/spbuilder

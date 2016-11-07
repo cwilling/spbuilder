@@ -1,0 +1,14 @@
+#!/bin/sh
+
+
+env > /tmp/.spbuilder
+echo >> /tmp/.spbuilder
+echo "build_jobname = $build_jobname" >> /tmp/.spbuilder
+
+
+# Normally, the SPB building directory is cleaned up elsewhere,
+# however an interruption & manual shutdown would leave it.
+# Therefore try removing it here as a last resort.
+if [ -d $build_jobname  -a "$build_jobname" != "/" ]; then
+    rm -rf $build_jobname
+fi
