@@ -230,8 +230,6 @@ lxc.mount.entry = $SPBUILDER_SLACKBUILDS mnt/slackbuilds none bind,ro,create=dir
 lxc.mount.entry = $SPBUILDER_BASE var/cache/spbuilder none bind,create=dir 0 0\n\
 &:" ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/config
 
-    echo "lxc.hook.stop = /usr/share/spbuilder/spbuilder.stop" >> ${lxc_base_dir}/${SPBUILDER_MASTER_NAME}/config
-
     # Setup hoorex
     SPB_WRAPPER=$(tempfile)
     sed -e "s/%SPB_SHUTDOWN%/$SPB_SHUTDOWN/" ${SPBUILDER_DATA_DIR}/spbuilder.create.in >$SPB_WRAPPER
@@ -498,7 +496,6 @@ for action_to_run in $action; do
     build)
         mkdir -p $BUILD_LOGDIR
         logfile=${BUILD_LOGDIR}/build-$(date +"%Y%m%d-%H%M%S")
-        #build_package 2>&1 |tee $logfile
         build_package
         ;;
     clean)

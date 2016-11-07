@@ -27,6 +27,7 @@ done
 
 
 BUILD_LOC="$1"
+LOGFILE="$2"
 BUILD_JOBNAME=$(basename $BUILD_LOC)
 BUILD_DIR=$SPBUILDER_BASE/build
 

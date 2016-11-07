@@ -2,7 +2,7 @@
 . /root/.spbuilderrc
 export SPB_SHUTDOWN=%SPB_SHUTDOWN%
 export TAG=_SBo
-LOGFILE=/var/cache/spbuilder/log/build-$(date +"%Y%m%d-%H%M%S")
+LOGFILE=/var/cache/spbuilder/log/build-$(date +"%Y%m%d-%H%M%S")-$(basename $1)
 echo "Logging to: $LOGFILE"
 sleep 5
-exec /usr/bin/spbuilder.build "$@" 2>&1 |tee $LOGFILE
+exec /usr/bin/spbuilder.build "$@" "$LOGFILE" 2>&1 |tee $LOGFILE
